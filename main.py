@@ -4,51 +4,31 @@ from fastapi.responses import StreamingResponse
 import pandas as pd
 import matplotlib.pyplot as plt
 import io
+from database import Base, engine
+
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-# =========================
-# DATABASE CONNECTION
-# =========================
-DATABASE_URL = "mysql+pymysql://root:logesh123@localhost:3306/newschema"
-engine = create_engine(DATABASE_URL)
-
-
-# =========================
-# ROOT ENDPOINT
-# =========================
 @app.get("/")
 def home():
     return {"message": "API is working"}
 
-
-# =========================
-# GET ALL TABLES
-# =========================
 @app.get("/tables")
 def get_tables():
     try:
         query = text("SHOW TABLES")
-
         with engine.connect() as conn:
             result = conn.execute(query)
             tables = [list(row)[0] for row in result]
-
         return {"tables": tables}
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# =========================
-# GET TABLE DATA
-# =========================
 @app.get("/data/{table_name}")
 def get_table_data(table_name: str):
     try:
-        # ✅ Validate table from DB
         query = text("SHOW TABLES")
-
         with engine.connect() as conn:
             result = conn.execute(query)
             tables = [list(row)[0] for row in result]
@@ -57,31 +37,19 @@ def get_table_data(table_name: str):
             raise HTTPException(status_code=400, detail="Table not found")
 
         query = text(f"SELECT * FROM {table_name} LIMIT 100")
-
         with engine.connect() as conn:
             result = conn.execute(query)
             data = [dict(row._mapping) for row in result]
 
-        return {
-            "table": table_name,
-            "count": len(data),
-            "data": data
-        }
+        return {"table": table_name, "count": len(data), "data": data}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# =========================
-# VISUALIZATION ENDPOINT
-# =========================
 @app.get("/visualize/{table_name}")
 def visualize_table(table_name: str):
-
     try:
-        # ✅ Validate table from DB
         query = text("SHOW TABLES")
-
         with engine.connect() as conn:
             result = conn.execute(query)
             tables = [list(row)[0] for row in result]
@@ -90,7 +58,6 @@ def visualize_table(table_name: str):
             raise HTTPException(status_code=400, detail="Table not found")
 
         query = text(f"SELECT * FROM {table_name} LIMIT 50")
-
         with engine.connect() as conn:
             result = conn.execute(query)
             data = [dict(row._mapping) for row in result]
@@ -100,39 +67,24 @@ def visualize_table(table_name: str):
 
         df = pd.DataFrame(data)
 
-        # =========================
-        # COLUMN DETECTION
-        # =========================
         num_cols = df.select_dtypes(include=["int64", "float64"]).columns
         cat_cols = df.select_dtypes(include=["object"]).columns
 
         if len(num_cols) == 0 or len(cat_cols) == 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Need at least one numeric and one text column"
-            )
+            raise HTTPException(status_code=400, detail="Need at least one numeric and one text column")
 
-        # ✅ Skip 'id' column if possible
         y_col = next((col for col in num_cols if col.lower() != "id"), num_cols[0])
         x_col = cat_cols[0]
 
-        # =========================
-        # CLEAN VISUALIZATION
-        # =========================
         df = df.sort_values(by=y_col, ascending=False).head(10)
 
         plt.figure(figsize=(12, 6))
         plt.barh(df[x_col], df[y_col])
-
         plt.xlabel(y_col)
         plt.ylabel(x_col)
         plt.title(f"{table_name}: {x_col} vs {y_col}")
-
         plt.tight_layout()
 
-        # =========================
-        # RETURN IMAGE
-        # =========================
         img = io.BytesIO()
         plt.savefig(img, format="png")
         img.seek(0)
