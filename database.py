@@ -1,8 +1,9 @@
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# 👉 Change username, password, db name
-DATABASE_URL = "mysql+pymysql://root:logesh123@localhost:3306/newschema"
+DATABASE_URL = os.getenv("DATABASE_URL", "mysql+pymysql://root:logesh123@localhost:3306/newschema")
+
 engine = create_engine(DATABASE_URL)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
