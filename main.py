@@ -3,7 +3,6 @@ from sqlalchemy import text
 from database import Base, engine
 
 app = FastAPI()
-
 Base.metadata.create_all(bind=engine)
 
 @app.get("/")
@@ -62,5 +61,125 @@ def universal_search(keyword: str):
             except Exception:
                 pass
         return {"search_keyword": keyword, "matched_tables": len(final_results), "results": final_results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# FILTER BY DATE RANGE
+# period: today, week, month, 3months, 6months, year
+# ==========================================
+@app.get("/filter/{table_name}/{period}")
+def filter_by_period(table_name: str, period: str):
+    try:
+        # Period mapping
+        period_map = {
+            "today":   "CURDATE()",
+            "week":    "CURDATE() - INTERVAL 7 DAY",
+            "month":   "CURDATE() - INTERVAL 1 MONTH",
+            "3months": "CURDATE() - INTERVAL 3 MONTH",
+            "6months": "CURDATE() - INTERVAL 6 MONTH",
+            "year":    "CURDATE() - INTERVAL 1 YEAR"
+        }
+
+        if period not in period_map:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid period! Use: {list(period_map.keys())}"
+            )
+
+        # Get columns
+        with engine.connect() as conn:
+            columns = [row[0] for row in conn.execute(text(f"SHOW COLUMNS FROM `{table_name}`"))]
+
+        # Find date column
+        date_col = None
+        for col in columns:
+            if "date" in col.lower():
+                date_col = col
+                break
+
+        if not date_col:
+            raise HTTPException(status_code=400, detail="No date column found in this table!")
+
+        from_date = period_map[period]
+
+        query = text(f"""
+            SELECT * FROM `{table_name}`
+            WHERE DATE(`{date_col}`) >= {from_date}
+            ORDER BY `{date_col}` DESC
+            LIMIT 100
+        """)
+
+        with engine.connect() as conn:
+            data = [dict(row._mapping) for row in conn.execute(query)]
+
+        return {
+            "table": table_name,
+            "period": period,
+            "date_column": date_col,
+            "count": len(data),
+            "data": data
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==========================================
+# FILTER BY DATE + KEYWORD
+# ==========================================
+@app.get("/filter/{table_name}/{period}/{keyword}")
+def filter_by_period_and_keyword(table_name: str, period: str, keyword: str):
+    try:
+        period_map = {
+            "today":   "CURDATE()",
+            "week":    "CURDATE() - INTERVAL 7 DAY",
+            "month":   "CURDATE() - INTERVAL 1 MONTH",
+            "3months": "CURDATE() - INTERVAL 3 MONTH",
+            "6months": "CURDATE() - INTERVAL 6 MONTH",
+            "year":    "CURDATE() - INTERVAL 1 YEAR"
+        }
+
+        if period not in period_map:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid period! Use: {list(period_map.keys())}"
+            )
+
+        with engine.connect() as conn:
+            columns = [row[0] for row in conn.execute(text(f"SHOW COLUMNS FROM `{table_name}`"))]
+
+        date_col = None
+        for col in columns:
+            if "date" in col.lower():
+                date_col = col
+                break
+
+        if not date_col:
+            raise HTTPException(status_code=400, detail="No date column found!")
+
+        from_date = period_map[period]
+        conditions = " OR ".join([f"CAST(`{col}` AS CHAR) LIKE :keyword" for col in columns])
+
+        query = text(f"""
+            SELECT * FROM `{table_name}`
+            WHERE ({conditions})
+            AND DATE(`{date_col}`) >= {from_date}
+            ORDER BY `{date_col}` DESC
+            LIMIT 100
+        """)
+
+        with engine.connect() as conn:
+            data = [dict(row._mapping) for row in conn.execute(query, {"keyword": f"%{keyword}%"})]
+
+        return {
+            "table": table_name,
+            "period": period,
+            "keyword": keyword,
+            "count": len(data),
+            "data": data
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
